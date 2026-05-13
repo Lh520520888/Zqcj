@@ -185,9 +185,10 @@ function setupMainPage() {
   const btnUploadSupplement = document.getElementById('btnUploadSupplement');
   const btnResetSupplement = document.getElementById('btnResetSupplement');
 
-  // 补单触发条件元素
-  const supplementAttack = document.getElementById('supplementAttack');
-  const supplementDangerousAttack = document.getElementById('supplementDangerousAttack');
+  // 补单触发模式元素
+  const supplementModeRadios = document.querySelectorAll('input[name="supplementMode"]');
+  const possessionThresholdSec = document.getElementById('possessionThresholdSec');
+  const possessionTimeRow = document.getElementById('possessionTimeRow');
 
   // 缩放级别
   const zoomLevels = [80, 90, 100, 110, 120];
@@ -509,24 +510,34 @@ function setupMainPage() {
   document.getElementById('btnTestStartAlert').addEventListener('click', () => playTestSound('home', 'startAlert'));
   document.getElementById('btnTestSupplement').addEventListener('click', () => playTestSound('supplement', 'supplement'));
 
-  // 加载补单触发条件
+  // 加载补单触发模式
   function loadSupplementTriggers() {
-    chrome.storage.local.get(['supplementAttack', 'supplementDangerousAttack'], (result) => {
-      supplementAttack.checked = result.supplementAttack !== false;
-      supplementDangerousAttack.checked = result.supplementDangerousAttack !== false;
+    chrome.storage.local.get(['supplementMode', 'possessionThresholdSec'], (result) => {
+      const mode = result.supplementMode || 'possession';
+      supplementModeRadios.forEach(radio => {
+        radio.checked = radio.value === mode;
+      });
+      possessionThresholdSec.value = result.possessionThresholdSec || 3;
+      // 根据模式显示/隐藏控球时间设置
+      possessionTimeRow.style.display = mode === 'possession' ? 'flex' : 'none';
     });
   }
 
-  // 保存补单触发条件
+  // 保存补单触发模式
   function saveSupplementTriggers() {
+    const selectedMode = Array.from(supplementModeRadios).find(r => r.checked).value;
     chrome.storage.local.set({
-      supplementAttack: supplementAttack.checked,
-      supplementDangerousAttack: supplementDangerousAttack.checked
+      supplementMode: selectedMode,
+      possessionThresholdSec: parseInt(possessionThresholdSec.value) || 3
     });
+    // 根据模式显示/隐藏控球时间设置
+    possessionTimeRow.style.display = selectedMode === 'possession' ? 'flex' : 'none';
   }
 
-  supplementAttack.addEventListener('change', saveSupplementTriggers);
-  supplementDangerousAttack.addEventListener('change', saveSupplementTriggers);
+  supplementModeRadios.forEach(radio => {
+    radio.addEventListener('change', saveSupplementTriggers);
+  });
+  possessionThresholdSec.addEventListener('change', saveSupplementTriggers);
 
   // 清除提醒日志
   btnClear.addEventListener('click', () => {

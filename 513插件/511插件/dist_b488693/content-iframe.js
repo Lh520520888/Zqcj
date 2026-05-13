@@ -269,7 +269,7 @@
     const existingSupplement = document.getElementById('mp-supplement-alert');
     if (existingSupplement) existingSupplement.remove();
 
-    const eventText = eventType === 'attack' ? '进攻' : '危险进攻';
+    const eventText = eventType === 'attack' ? '进攻' : eventType === 'possession' ? '持续控球' : '危险进攻';
     const accentColor = '#ffab00';
     const accentGlow = 'rgba(255,171,0,0.4)';
     const isHome = team === 'home';
@@ -398,6 +398,9 @@
 
   // ===== 处理进攻/危险进攻事件 =====
   function processAttackEvent(labelElement, eventType, teams, detectedTeamName) {
+    // 进攻事件出现时清除所有控球计时器（球权已变化）
+    Object.keys(possessionTimers).forEach(tn => clearPossessionTimer(tn));
+    
     let teamName = detectedTeamName;
     let team = 'home';
 
@@ -450,18 +453,23 @@
       } else
       // 如果当前进攻方是下注方的对方，触发补单提醒
       if (team !== pending.betTeam) {
-        // 检查补单触发条件设置
-        chrome.storage.local.get(['supplementAttack', 'supplementDangerousAttack'], (settings) => {
-          const allowAttack = settings.supplementAttack !== false;
-          const allowDangerousAttack = settings.supplementDangerousAttack !== false;
+        // 检查补单触发模式设置
+        chrome.storage.local.get(['supplementMode'], (settings) => {
+          const supplementMode = settings.supplementMode || 'possession';
           const isDangerous = eventType === 'dangerous_attack';
 
-          if (isDangerous && !allowDangerousAttack) {
-            sendDebugLog(`[${getMatchTime()}] 跳过补单: 危险进攻未勾选`);
-            return;
+          // 检查是否应该触发
+          let shouldTrigger = false;
+          if (supplementMode === 'dangerous_attack' && isDangerous) {
+            shouldTrigger = true;
+          } else if (supplementMode === 'attack') {
+            shouldTrigger = true;
+          } else if (supplementMode === 'possession') {
+            shouldTrigger = false; // 控球模式下进攻不触发
           }
-          if (!isDangerous && !allowAttack) {
-            sendDebugLog(`[${getMatchTime()}] 跳过补单: 进攻未勾选`);
+
+          if (!shouldTrigger) {
+            sendDebugLog(`[${getMatchTime()}] 跳过补单: 当前模式${supplementMode}不触发`);
             return;
           }
 
@@ -696,6 +704,10 @@
   // 球队级冷却Map：同一球队同类事件15秒内只弹一次（防止同一角球多个动画元素重复触发）
   const cooldownMap = {};
   let dedupWindowMs = 15000;
+  // 控球计时器
+  const possessionTimers = {};
+  let possessionThresholdMs = 2000;
+  let possessionSupplementCooldown = 0;
 
   function sendDebugLog(message) {
     safeSendMessage({
@@ -706,6 +718,116 @@
       }
     });
     console.log('[MatchPulse]', message);
+  }
+
+  // 清除指定球队的控球计时器
+  function clearPossessionTimer(teamName) {
+    if (possessionTimers[teamName]) {
+      clearTimeout(possessionTimers[teamName]);
+      delete possessionTimers[teamName];
+    }
+  }
+
+  // 处理控球事件
+  function processPossessionEvent(detectedTeamName, teams) {
+    // 识别控球方球队
+    let team = null;
+    let teamName = detectedTeamName;
+    if (detectedTeamName) {
+      if (detectedTeamName === teams.home) team = 'home';
+      else if (detectedTeamName === teams.away) team = 'away';
+    }
+    if (!teamName) {
+      teamName = team === 'home' ? teams.home : team === 'away' ? teams.away : '未知';
+    }
+
+    // 读取补单模式设置
+    chrome.storage.local.get(['supplementMode', 'possessionThresholdSec'], (result) => {
+      const supplementMode = result.supplementMode || 'possession';
+      if (supplementMode !== 'possession') {
+        return; // 非控球模式不处理
+      }
+      
+      possessionThresholdMs = (result.possessionThresholdSec || 3) * 1000;
+
+      // 检查是否有待补单
+      const pending = getPendingSupplement();
+      if (!pending) {
+        return;
+      }
+      
+      // 检查比赛ID是否匹配
+      const currentMatchId = getMatchId();
+      if (pending.matchId && currentMatchId && pending.matchId !== currentMatchId) {
+        return;
+      }
+      
+      // 检查补单弹窗是否已显示
+      if (supplementAlertShown) {
+        return;
+      }
+      
+      // 检查控球冷却
+      if (Date.now() < possessionSupplementCooldown) {
+        return;
+      }
+      
+      // 如果控球方是下注方，清除对方的计时器并返回
+      if (team === pending.betTeam) {
+        const oppositeTeamName = pending.oppositeTeamName;
+        if (oppositeTeamName) {
+          clearPossessionTimer(oppositeTeamName);
+        }
+        return;
+      }
+      
+      // 如果控球方不是待补单的对方，清除该方的计时器
+      if (team !== pending.oppositeTeam) {
+        clearPossessionTimer(teamName);
+        return;
+      }
+      
+      // 如果该球队已有活跃计时器，说明正在计时中，返回
+      if (possessionTimers[teamName]) {
+        return;
+      }
+      
+      // 创建新的控球计时器
+      sendDebugLog(`[控球计时] ${teamName} 开始控球，${possessionThresholdMs/1000}秒后触发提醒`);
+      possessionTimers[teamName] = setTimeout(() => {
+        // 计时器触发
+        delete possessionTimers[teamName];
+        
+        // 设置冷却（防止重复触发）
+        possessionSupplementCooldown = Date.now() + 10000;
+        
+        // 设置补单弹窗标记
+        supplementAlertShown = true;
+        
+        const minute = getCurrentMinute();
+        
+        // 发送日志
+        safeSendMessage({
+          type: 'LOG',
+          data: {
+            matchId: currentMatchId,
+            eventType: 'supplement',
+            team: team,
+            teamName: teamName,
+            minute: minute,
+            source: 'iframe',
+            isAlert: true,
+            timestamp: new Date().toISOString(),
+            url: window.location.href
+          }
+        });
+        
+        sendDebugLog(`[控球触发] ${teamName} 持续控球 ${possessionThresholdMs/1000}秒，触发补单提醒`);
+        
+        // 显示补单弹窗
+        showSupplementAlert(teamName, 'possession', minute, team, pending);
+      }, possessionThresholdMs);
+    });
   }
 
   // 在页面上显示醒目的提醒框
@@ -969,6 +1091,12 @@
         const attackType = (label === '危险进攻' || label.includes('危险进攻')) ? 'dangerous_attack' : 'attack';
         sendDebugLog(`[${getMatchTime()}] >>> 匹配到${label}! "${teamName}"`);
         processAttackEvent(labelElement, attackType, teams, teamName);
+      }
+
+      // 控球检测
+      if (label === '控球' || label.includes('控球')) {
+        sendDebugLog(`[${getMatchTime()}] >>> 匹配到控球! "${teamName}"`);
+        processPossessionEvent(teamName, teams);
       }
 
       // 进球检测

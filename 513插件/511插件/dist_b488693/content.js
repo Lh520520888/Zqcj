@@ -12,6 +12,10 @@
   let observerAttached = false;
   let initialized = false;
   let throttleTimer = null;
+  // 控球计时器
+  const possessionTimers = {};
+  let possessionThresholdMs = 2000;
+  let possessionSupplementCooldown = 0;
 
   function getMatchId() {
     const match = window.location.pathname.match(/detail-(\d+)/);
@@ -30,6 +34,107 @@
       timeSettings.secondHalfEnd = result.secondHalfEnd ?? 88;
       dedupWindowMs = (parseInt(result.dedupWindowSec) || 15) * 1000;
       sendDebugLog(`时间设置已加载: 上半场=${timeSettings.firstHalfStart}-${timeSettings.firstHalfEnd}, 下半场=${timeSettings.secondHalfStart}-${timeSettings.secondHalfEnd}, 冷却=${dedupWindowMs/1000}s`);
+    });
+  }
+
+  // 清除指定球队的控球计时器
+  function clearPossessionTimer(teamName) {
+    if (possessionTimers[teamName]) {
+      clearTimeout(possessionTimers[teamName]);
+      delete possessionTimers[teamName];
+    }
+  }
+
+  // 处理控球事件
+  function processPossessionItem(item, teams) {
+    const info = extractItemInfo(item);
+    if (!info) return;
+    const { text, minute } = info;
+    if (!minute) return;
+
+    // 检查是否包含控球
+    if (!text.includes('控球')) return;
+
+    // 从括号中提取球队名
+    const teamMatch = text.match(/\(([^)]+)\)/);
+    const textTeamName = teamMatch ? teamMatch[1] : '';
+    let teamName = '未知';
+    let team = null;
+
+    if (textTeamName) {
+      if (teams.home && (teams.home.includes(textTeamName) || textTeamName.includes(teams.home))) {
+        teamName = teams.home; team = 'home';
+      } else if (teams.away && (teams.away.includes(textTeamName) || textTeamName.includes(teams.away))) {
+        teamName = teams.away; team = 'away';
+      }
+    }
+    if (!team) return;
+
+    // 读取补单模式设置
+    chrome.storage.local.get(['supplementMode', 'possessionThresholdSec', 'pendingSupplement'], (result) => {
+      const supplementMode = result.supplementMode || 'possession';
+      if (supplementMode !== 'possession') {
+        return; // 非控球模式不处理
+      }
+      
+      possessionThresholdMs = (result.possessionThresholdSec || 3) * 1000;
+      const pending = result.pendingSupplement;
+      
+      if (!pending) return;
+      
+      // 检查比赛ID是否匹配
+      if (pending.matchId && pending.matchId !== getMatchId()) return;
+      
+      // 检查控球冷却
+      if (Date.now() < possessionSupplementCooldown) return;
+      
+      // 如果控球方是下注方，清除对方的计时器并返回
+      if (team === pending.betTeam) {
+        const oppositeTeamName = pending.oppositeTeamName;
+        if (oppositeTeamName) {
+          clearPossessionTimer(oppositeTeamName);
+        }
+        return;
+      }
+      
+      // 如果控球方不是待补单的对方，清除该方的计时器
+      if (team !== pending.oppositeTeam) {
+        clearPossessionTimer(teamName);
+        return;
+      }
+      
+      // 如果该球队已有活跃计时器，说明正在计时中，返回
+      if (possessionTimers[teamName]) return;
+      
+      // 创建新的控球计时器
+      sendDebugLog(`[${minute}'] 控球计时开始: ${teamName}，${possessionThresholdMs/1000}秒后触发提醒`);
+      possessionTimers[teamName] = setTimeout(() => {
+        // 计时器触发
+        delete possessionTimers[teamName];
+        
+        // 设置冷却（防止重复触发）
+        possessionSupplementCooldown = Date.now() + 10000;
+        
+        // 发送日志
+        sendDebugLog(`[${minute}'] ★ 控球触发补单: ${teamName} 持续控球 ${possessionThresholdMs/1000}秒`);
+        safeSendMessage({
+          type: 'LOG',
+          data: {
+            matchId: getMatchId(),
+            eventType: 'supplement',
+            team: team,
+            teamName: teamName,
+            minute: minute,
+            source: 'text',
+            isAlert: true,
+            timestamp: new Date().toISOString(),
+            url: window.location.href
+          }
+        });
+        
+        // 显示补单弹窗
+        showSupplementAlert(teamName, 'possession', minute, team, pending);
+      }, possessionThresholdMs);
     });
   }
 
@@ -167,7 +272,7 @@
     const existing = document.getElementById('mp-supplement-alert');
     if (existing) existing.remove();
 
-    const eventText = eventType === 'attack' ? '进攻' : '危险进攻';
+    const eventText = eventType === 'attack' ? '进攻' : eventType === 'possession' ? '持续控球' : '危险进攻';
     const accentColor = '#ffab00';
     const accentGlow = 'rgba(255,171,0,0.4)';
     const isHome = team === 'home';
@@ -491,6 +596,9 @@
   }
 
   function processAttackItem(item, teams) {
+    // 进攻事件出现时清除所有控球计时器（球权已变化）
+    Object.keys(possessionTimers).forEach(tn => clearPossessionTimer(tn));
+
     const info = extractItemInfo(item);
     if (!info) return;
     const { text, minute } = info;
@@ -543,11 +651,29 @@
       }
     });
 
-    chrome.storage.local.get(['pendingSupplement'], (result) => {
+    chrome.storage.local.get(['pendingSupplement', 'supplementMode'], (result) => {
       const pending = result.pendingSupplement;
       if (!pending) return;
       if (pending.matchId && pending.matchId !== getMatchId()) return;
       if (team !== pending.oppositeTeam) return;
+
+      const supplementMode = result.supplementMode || 'possession';
+      const isDangerous = attackType === 'dangerous_attack';
+      
+      // 检查是否应该触发
+      let shouldTrigger = false;
+      if (supplementMode === 'dangerous_attack' && isDangerous) {
+        shouldTrigger = true;
+      } else if (supplementMode === 'attack') {
+        shouldTrigger = true;
+      } else if (supplementMode === 'possession') {
+        shouldTrigger = false; // 控球模式下进攻不触发
+      }
+
+      if (!shouldTrigger) {
+        sendDebugLog(`[${minute}'] 跳过补单: 当前模式${supplementMode}不触发`);
+        return;
+      }
 
       sendDebugLog(`[${minute}'] ★ 触发补单提醒: ${teamName} ${attackType}`);
       safeSendMessage({
@@ -569,6 +695,9 @@
   }
 
   function processGoalItem(item, teams) {
+    // 进球事件出现时清除所有控球计时器（球权已变化）
+    Object.keys(possessionTimers).forEach(tn => clearPossessionTimer(tn));
+
     const info = extractItemInfo(item);
     if (!info) return;
     const { text, minute } = info;
@@ -652,6 +781,7 @@
       processCornerItem(item, teams);
       processAttackItem(item, teams);
       processGoalItem(item, teams);
+      processPossessionItem(item, teams);
     });
   }
 

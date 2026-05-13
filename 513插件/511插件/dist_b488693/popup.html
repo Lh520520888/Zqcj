@@ -1118,20 +1118,34 @@
 
         <div class="sound-tip">支持 mp3、wav 等格式，建议文件小于 500KB</div>
 
-        <!-- ===== 对冲触发条件 ===== -->
+        <!-- ===== 对冲触发模式 ===== -->
         <div class="sound-group" style="margin-top:10px;">
-          <div class="sound-group-title">◎ 对冲触发条件</div>
+          <div class="sound-group-title">◎ 对冲触发模式</div>
           <div class="toggle-group">
-            <label class="toggle-label">
-              <input type="checkbox" id="supplementAttack" checked>
-              进攻信号
+            <label class="toggle-label" style="border-color:rgba(0,230,118,0.3);">
+              <input type="radio" name="supplementMode" value="possession" checked>
+              <span style="color:#00e676;font-weight:bold;">持续控球</span> <span style="color:#4a5a7a;">● 稳健安全</span>
             </label>
-            <label class="toggle-label">
-              <input type="checkbox" id="supplementDangerousAttack" checked>
-              危险进攻信号
+            <label class="toggle-label" style="border-color:rgba(255,171,0,0.3);">
+              <input type="radio" name="supplementMode" value="attack">
+              <span style="color:#ffab00;font-weight:bold;">进攻信号</span> <span style="color:#4a5a7a;">● 中等风险</span>
+            </label>
+            <label class="toggle-label" style="border-color:rgba(255,82,82,0.3);">
+              <input type="radio" name="supplementMode" value="dangerous_attack">
+              <span style="color:#ff5252;font-weight:bold;">危险进攻</span> <span style="color:#4a5a7a;">● 激进模式</span>
             </label>
           </div>
-          <div style="font-size:9px;color:#3a4a6a;margin-top:6px;">勾选的事件类型才会触发对冲提醒弹窗和声音</div>
+          <div id="possessionTimeRow" style="margin-top:8px;display:flex;align-items:center;gap:6px;">
+            <span style="color:#7a8aaa;font-size:11px;">控球持续</span>
+            <input type="number" id="possessionThresholdSec" class="time-input" min="1" max="30" value="3" style="width:50px;">
+            <span style="color:#7a8aaa;font-size:11px;">秒后提醒</span>
+          </div>
+          <div style="font-size:9px;color:#3a4a6a;margin-top:8px;line-height:1.6;">
+            三种模式互斥，选择一种触发条件：<br>
+            ● 稳健 对方持续控球N秒才提醒，信号最稳<br>
+            ● 中等 对方进攻即提醒，覆盖面适中<br>
+            ● 激进 仅危险进攻才提醒，信号最少但最精准
+          </div>
         </div>
 
         <!-- ===== 监测窗口 ===== -->

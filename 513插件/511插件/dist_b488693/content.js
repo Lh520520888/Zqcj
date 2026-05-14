@@ -667,7 +667,15 @@
       } else if (supplementMode === 'attack' && !isDangerous) {
         shouldTrigger = true;
       } else if (supplementMode === 'possession') {
-        shouldTrigger = false; // 控球模式下进攻不触发
+        // 控球模式：如果该球队已有活跃计时器，跳过（计时器会触发）
+        // 如果没有活跃计时器，立即触发（抢时间）
+        if (possessionTimers[teamName]) {
+          sendDebugLog(`[${minute}'] 控球模式下${teamName}已有计时器，跳过进攻触发`);
+          return;
+        } else {
+          sendDebugLog(`[${minute}'] 控球模式下${teamName}无活跃计时器，进攻立即触发补单`);
+          shouldTrigger = true;
+        }
       }
 
       if (!shouldTrigger) {

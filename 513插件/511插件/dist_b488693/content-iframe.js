@@ -614,6 +614,9 @@
 
   // ===== 处理进球事件 =====
   function processGoalEvent(labelElement, teams, detectedTeamName) {
+    // 进球事件出现时清除所有控球计时器（球权已变化）
+    Object.keys(possessionTimers).forEach(tn => clearPossessionTimer(tn));
+    
     let teamName = detectedTeamName;
     let team = 'home';
 

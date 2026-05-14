@@ -596,7 +596,8 @@
   }
 
   function processAttackItem(item, teams) {
-    // 进攻事件出现时清除所有控球计时器（球权已变化）
+    // 清除控球计时器（如果存在）
+    const hadPossessionTimer = Object.keys(possessionTimers).length > 0;
     Object.keys(possessionTimers).forEach(tn => clearPossessionTimer(tn));
 
     const info = extractItemInfo(item);
@@ -667,14 +668,13 @@
       } else if (supplementMode === 'attack' && !isDangerous) {
         shouldTrigger = true;
       } else if (supplementMode === 'possession') {
-        // 控球模式：如果该球队已有活跃计时器，跳过（计时器会触发）
-        // 如果没有活跃计时器，立即触发（抢时间）
-        if (possessionTimers[teamName]) {
-          sendDebugLog(`[${minute}'] 控球模式下${teamName}已有计时器，跳过进攻触发`);
-          return;
-        } else {
-          sendDebugLog(`[${minute}'] 控球模式下${teamName}无活跃计时器，进攻立即触发补单`);
+        // 控球模式：只有在有活跃计时器的情况下才触发
+        if (hadPossessionTimer) {
+          sendDebugLog(`[${minute}'] 控球模式下${teamName}进攻出现，立即触发补单`);
+          supplementAlertShown = true;
           shouldTrigger = true;
+        } else {
+          sendDebugLog(`[${minute}'] 控球模式下${teamName}无活跃计时器，跳过`);
         }
       }
 
@@ -777,6 +777,8 @@
       safeSendMessage({ type: 'BET_RECORD', data: hitRecord });
       showHitAlert(teamName, minute, team, pending);
       safeSendMessage({ type: 'CLEAR_PENDING_SUPPLEMENT' });
+      // 重置补单弹窗标志，允许新的补单提醒
+      supplementAlertShown = false;
     });
   }
 

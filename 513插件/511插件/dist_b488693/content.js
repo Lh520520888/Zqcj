@@ -112,8 +112,8 @@
         // 计时器触发
         delete possessionTimers[teamName];
         
-        // 设置冷却（防止重复触发）
-        possessionSupplementCooldown = Date.now() + 10000;
+        // 设置冷却（防止重复触发，复用去重窗口设置）
+        possessionSupplementCooldown = Date.now() + dedupWindowMs;
         
         // 发送日志
         sendDebugLog(`[${minute}'] ★ 控球触发补单: ${teamName} 持续控球 ${possessionThresholdMs/1000}秒`);
@@ -664,7 +664,7 @@
       let shouldTrigger = false;
       if (supplementMode === 'dangerous_attack' && isDangerous) {
         shouldTrigger = true;
-      } else if (supplementMode === 'attack') {
+      } else if (supplementMode === 'attack' && !isDangerous) {
         shouldTrigger = true;
       } else if (supplementMode === 'possession') {
         shouldTrigger = false; // 控球模式下进攻不触发

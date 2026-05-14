@@ -24,6 +24,67 @@ function safeSendMessage(msg, callback) {
   }
 }
 
+// 全局的踢出设备函数
+window.removeDevice = async function(deviceId, deviceName) {
+  if (!confirm(`确定要踢出设备"${deviceName}"吗？\n\n被踢出的设备需要重新登录。`)) {
+    return;
+  }
+
+  try {
+    const result = await authService.removeDevice(deviceId);
+    if (result.success) {
+      alert(`设备"${deviceName}"已被踢出`);
+      // 更新本地存储的用户信息
+      const user = await authService.getUser();
+      if (user) {
+        user.devices = result.devices;
+        user.devices_count = result.devices_count;
+        await chrome.storage.local.set({ auth_user: user });
+      }
+      // 重新加载设备列表
+      renderDeviceList(result.devices);
+    } else {
+      alert(result.message || '踢出设备失败');
+    }
+  } catch (error) {
+    console.error('踢出设备失败:', error);
+    alert('踢出设备失败，请稍后重试');
+  }
+};
+
+// 设备列表刷新函数（供全局调用）
+async function renderDeviceList(devices) {
+  const deviceListContainer = document.getElementById('deviceListContainer');
+  const currentDeviceId = await authService.getDeviceId();
+  
+  if (!devices || devices.length === 0) {
+    deviceListContainer.innerHTML = '<div style="color:#999;font-size:11px;padding:10px;text-align:center;">暂无设备</div>';
+    return;
+  }
+
+  let html = '';
+  devices.forEach(device => {
+    const isCurrentDevice = device.device_id === currentDeviceId;
+    const lastLogin = device.last_login_at ? new Date(device.last_login_at).toLocaleString('zh-CN') : '未知';
+
+    html += `
+      <div class="device-item ${isCurrentDevice ? 'current' : ''}">
+        <div style="flex:1;">
+          <div class="device-name ${isCurrentDevice ? 'current-device' : ''}">
+            ${device.device_name || '未知设备'}
+            ${isCurrentDevice ? ' <span class="device-badge">(当前)</span>' : ''}
+          </div>
+          <div class="device-meta">最后登录: ${lastLogin}</div>
+        </div>
+        ${!isCurrentDevice ? `
+          <button class="btn-kick" onclick="removeDevice('${device.device_id}', '${(device.device_name || device.device_id).replace(/'/g, "\\'")}')">踢出</button>
+        ` : ''}
+      </div>
+    `;
+  });
+  deviceListContainer.innerHTML = html;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   // 检查登录状态
   const isLoggedIn = await authService.isLoggedIn();
@@ -99,12 +160,10 @@ async function loadUserInfo() {
       const deviceCount = user.devices_count || 0;
       const accountDevices = document.getElementById('accountDevices');
       if (accountDevices) {
-        accountDevices.textContent = `${deviceCount}/4 台设备`;
+        accountDevices.textContent = `${deviceCount}/2 台设备`;
 
-        if (deviceCount >= 4) {
+        if (deviceCount >= 2) {
           accountDevices.className = 'value danger';
-        } else if (deviceCount >= 3) {
-          accountDevices.className = 'value warning';
         } else {
           accountDevices.className = 'value success';
         }
@@ -721,61 +780,5 @@ function setupMainPage() {
     deviceManagerPanel.style.display = 'none';
     btnManageDevices.style.display = 'block';
   });
-
-  async function renderDeviceList(devices) {
-    if (!devices || devices.length === 0) {
-      deviceListContainer.innerHTML = '<div style="color:#999;font-size:11px;padding:10px;text-align:center;">暂无设备</div>';
-      return;
-    }
-
-    let html = '';
-    devices.forEach(device => {
-      const isCurrentDevice = device.device_id === currentDeviceId;
-      const lastLogin = device.last_login_at ? new Date(device.last_login_at).toLocaleString('zh-CN') : '未知';
-
-      html += `
-        <div class="device-item ${isCurrentDevice ? 'current' : ''}">
-          <div style="flex:1;">
-            <div class="device-name ${isCurrentDevice ? 'current-device' : ''}">
-              ${device.device_name || '未知设备'}
-              ${isCurrentDevice ? ' <span class="device-badge">(当前)</span>' : ''}
-            </div>
-            <div class="device-meta">最后登录: ${lastLogin}</div>
-          </div>
-          ${!isCurrentDevice ? `
-            <button class="btn-kick" onclick="removeDevice('${device.device_id}', '${device.device_name || device.device_id}')">踢出</button>
-          ` : ''}
-        </div>
-      `;
-    });
-    deviceListContainer.innerHTML = html;
-  }
-
-  window.removeDevice = async function(deviceId, deviceName) {
-    if (!confirm(`确定要踢出设备"${deviceName}"吗？\n\n被踢出的设备需要重新登录。`)) {
-      return;
-    }
-
-    try {
-      const result = await authService.removeDevice(deviceId);
-      if (result.success) {
-        alert(`设备"${deviceName}"已被踢出`);
-        // 更新显示
-        const user = await authService.getUser();
-        if (user) {
-          user.devices = result.devices;
-          user.devices_count = result.devices_count;
-          await chrome.storage.local.set({ auth_user: user });
-          // 刷新页面以更新设备列表
-          location.reload();
-        }
-      } else {
-        alert(result.message || '踢出设备失败');
-      }
-    } catch (error) {
-      console.error('踢出设备失败:', error);
-      alert('踢出设备失败，请稍后重试');
-    }
-  };
 }
 

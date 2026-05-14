@@ -98,6 +98,21 @@ class AuthService {
       })
     });
     if (result.success && result.token) {
+      // 检查设备限制（前端限制为2台）
+      if (result.user && result.user.devices_count >= 2) {
+        const currentDeviceInList = result.user.devices && 
+          result.user.devices.some(d => d.device_id === deviceId);
+        
+        if (!currentDeviceInList) {
+          // 当前设备不在列表中，说明已被踢出
+          this.clearAuth();
+          return {
+            success: false,
+            message: `设备数量已达上限（2台），请先踢出其他设备后再试`
+          };
+        }
+      }
+      
       await this.saveAuth(result.token, result.user);
     }
     return result;
@@ -114,6 +129,29 @@ class AuthService {
       console.error('Logout request failed:', error);
     }
     await this.clearAuth();
+  }
+
+  async checkDeviceLimit() {
+    try {
+      const result = await this.verifyToken();
+      if (result.success && result.user) {
+        const deviceId = await this.getDeviceId();
+        const currentDeviceInList = result.user.devices && 
+          result.user.devices.some(d => d.device_id === deviceId);
+        
+        if (result.user.devices_count >= 2 && !currentDeviceInList) {
+          await this.clearAuth();
+          chrome.runtime.sendMessage({
+            type: 'DEVICE_REMOVED',
+            message: `设备数量已达上限（2台），当前设备已被移除`
+          });
+          return false;
+        }
+      }
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   async getProfile() {
